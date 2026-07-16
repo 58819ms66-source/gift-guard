@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>기프티콘 유효기한 점검</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+      background: #f5f4f0;
+      color: #1a1a1a;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      max-width: 560px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 160px;
+      padding: 0.875rem 1rem;
+      border: 1px solid #d4d0c8;
+      border-radius: 8px;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+      resize: vertical;
+      background: #fff;
+    }
+
+    textarea:focus {
+      outline: 2px solid #2d6a4f;
+      border-color: transparent;
+    }
+
+    button {
+      margin-top: 0.75rem;
+      width: 100%;
+      padding: 0.875rem;
+      background: #2d6a4f;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:hover { background: #245a42; }
+
+    #results { margin-top: 2rem; }
+
+    .hero {
+      background: #fff;
+      border-radius: 12px;
+      padding: 1.5rem;
+      text-align: center;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    }
+
+    .hero-label {
+      font-size: 0.875rem;
+      color: #666;
+      margin-bottom: 0.25rem;
+    }
+
+    .hero-amount {
+      font-size: 2rem;
+      font-weight: 800;
+      color: #c1121f;
+      letter-spacing: -0.02em;
+    }
+
+    section {
+      background: #fff;
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    }
+
+    section h2 {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.75rem;
+    }
+
+    .item {
+      padding: 0.5rem 0;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      border-bottom: 1px solid #f0eeea;
+    }
+
+    .item:last-child { border-bottom: none; }
+
+    .item.urgent { color: #c1121f; font-weight: 600; }
+
+    .item.used { opacity: 0.4; }
+
+    .item-row {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+    }
+
+    .item-label { flex: 1; }
+
+    .item-used {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.8125rem;
+      color: #666;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .item-used input { cursor: pointer; }
+
+    .empty {
+      font-size: 0.875rem;
+      color: #aaa;
+    }
+
+    .total-line {
+      font-size: 0.9375rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    .error-line {
+      font-size: 0.875rem;
+      color: #888;
+      padding: 0.35rem 0;
+    }
+
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>기프티콘 목록</h1>
+    <textarea id="input" placeholder="스타벅스아메리카노 4500원 2026-07-10&#10;교촌치킨 18000원 2026-08-01"></textarea>
+    <button id="check">점검</button>
+
+    <div id="results" class="hidden">
+      <div class="hero">
+        <div class="hero-label">30일 안에 죽는 돈</div>
+        <div class="hero-amount" id="dying-soon"></div>
+      </div>
+
+      <section id="alive-section">
+        <h2>살아있는 기프티콘</h2>
+        <div id="alive-list"></div>
+      </section>
+
+      <section id="expired-section">
+        <h2>떠난 돈</h2>
+        <div class="total-line" id="expired-total"></div>
+        <div id="expired-list"></div>
+      </section>
+
+      <section id="error-section">
+        <h2>문 앞</h2>
+        <div id="error-list"></div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    var STORAGE_KEY = "expiry-used-gifticons";
+    var currentAlive = [];
+
+    function formatAmount(n) {
+      return n.toLocaleString("ko-KR") + "원";
+    }
+
+    function itemKey(item) {
+      return item.name + "|" + item.amount + "|" + item.dateStr;
+    }
+
+    function loadUsedSet() {
+      try {
+        return new Set(JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"));
+      } catch (e) {
+        return new Set();
+      }
+    }
+
+    function saveUsedSet(usedSet) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(usedSet)));
+    }
+
+    function updateDyingSoonSum() {
+      var usedSet = loadUsedSet();
+      var sum = currentAlive
+        .filter(function (item) {
+          return item.days <= 30 && !usedSet.has(itemKey(item));
+        })
+        .reduce(function (acc, item) { return acc + item.amount; }, 0);
+      document.getElementById("dying-soon").textContent = formatAmount(sum);
+    }
+
+    function parseLine(line) {
+      const dateMatch = line.match(/(\d{4}-\d{2}-\d{2})\s*$/);
+      if (!dateMatch) return null;
+
+      const beforeDate = line.slice(0, dateMatch.index).trim();
+      const amountMatch = beforeDate.match(/([\d,]+)\s*원\s*$/);
+      if (!amountMatch) return null;
+
+      const name = beforeDate.slice(0, amountMatch.index).trim();
+      if (!name) return null;
+
+      const amount = parseInt(amountMatch[1].replace(/,/g, ""), 10);
+      if (isNaN(amount)) return null;
+
+      const [y, m, d] = dateMatch[1].split("-").map(Number);
+      const expiry = new Date(y, m - 1, d);
+      if (expiry.getFullYear() !== y || expiry.getMonth() !== m - 1 || expiry.getDate() !== d) {
+        return null;
+      }
+
+      return { name, amount, expiry, dateStr: dateMatch[1] };
+    }
+
+    function daysRemaining(expiry) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const diff = expiry.getTime() - today.getTime();
+      return Math.floor(diff / (1000 * 60 * 60 * 24));
+    }
+
+    function renderAliveItem(item, usedSet) {
+      var key = itemKey(item);
+      var isUsed = usedSet.has(key);
+      var el = document.createElement("div");
+      el.className = "item" + (item.days <= 7 ? " urgent" : "") + (isUsed ? " used" : "");
+
+      var row = document.createElement("div");
+      row.className = "item-row";
+
+      var label = document.createElement("span");
+      label.className = "item-label";
+      label.textContent = item.name + " · " + formatAmount(item.amount) + " · D-" + item.days;
+
+      var usedLabel = document.createElement("label");
+      usedLabel.className = "item-used";
+
+      var checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = isUsed;
+      checkbox.addEventListener("change", function () {
+        var set = loadUsedSet();
+        if (checkbox.checked) {
+          set.add(key);
+        } else {
+          set.delete(key);
+        }
+        saveUsedSet(set);
+        el.classList.toggle("used", checkbox.checked);
+        updateDyingSoonSum();
+      });
+
+      usedLabel.appendChild(checkbox);
+      usedLabel.appendChild(document.createTextNode("사용함"));
+
+      row.appendChild(label);
+      row.appendChild(usedLabel);
+      el.appendChild(row);
+      return el;
+    }
+
+    document.getElementById("check").addEventListener("click", function () {
+      const lines = document.getElementById("input").value.split("\n");
+      const alive = [];
+      const expired = [];
+      const errors = [];
+
+      lines.forEach(function (raw, index) {
+        const line = raw.trim();
+        if (!line) return;
+
+        const parsed = parseLine(line);
+        if (!parsed) {
+          errors.push({ lineNum: index + 1, text: raw });
+          return;
+        }
+
+        const days = daysRemaining(parsed.expiry);
+        const item = {
+          name: parsed.name,
+          amount: parsed.amount,
+          days: days,
+          dateStr: parsed.dateStr
+        };
+
+        if (days < 0) {
+          expired.push(item);
+        } else {
+          alive.push(item);
+        }
+      });
+
+      alive.sort(function (a, b) { return a.days - b.days; });
+      currentAlive = alive;
+
+      const expiredSum = expired.reduce(function (sum, item) { return sum + item.amount; }, 0);
+      const usedSet = loadUsedSet();
+
+      const aliveList = document.getElementById("alive-list");
+      aliveList.innerHTML = "";
+      if (alive.length === 0) {
+        aliveList.innerHTML = '<div class="empty">없음</div>';
+      } else {
+        alive.forEach(function (item) {
+          aliveList.appendChild(renderAliveItem(item, usedSet));
+        });
+      }
+
+      updateDyingSoonSum();
+
+      document.getElementById("expired-total").textContent = "합계 " + formatAmount(expiredSum);
+
+      const expiredList = document.getElementById("expired-list");
+      expiredList.innerHTML = "";
+      if (expired.length === 0) {
+        expiredList.innerHTML = '<div class="empty">없음</div>';
+      } else {
+        expired.forEach(function (item) {
+          const el = document.createElement("div");
+          el.className = "item";
+          el.textContent = item.name + " · " + formatAmount(item.amount);
+          expiredList.appendChild(el);
+        });
+      }
+
+      const errorList = document.getElementById("error-list");
+      errorList.innerHTML = "";
+      if (errors.length === 0) {
+        errorList.innerHTML = '<div class="empty">없음</div>';
+      } else {
+        errors.forEach(function (err) {
+          const el = document.createElement("div");
+          el.className = "error-line";
+          el.textContent = err.lineNum + "번째 줄: " + err.text;
+          errorList.appendChild(el);
+        });
+      }
+
+      document.getElementById("results").classList.remove("hidden");
+    });
+  </script>
+</body>
+</html>
